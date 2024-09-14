@@ -1,0 +1,8 @@
+app_name: MyNewApp
+version: 1.1.0
+database:
+  host: localhost
+  port: 5433
+  username: admin
+  password: secret
+
