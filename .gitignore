@@ -1,1 +1,10 @@
 target
+updated-values*yaml
+*.swp
+redpanda.license
+certs
+generate-certs.sh
+hmac.json
+private-ca-key
+superusers.txt
+

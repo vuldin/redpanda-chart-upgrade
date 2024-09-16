@@ -1,0 +1,319 @@
+auth:
+  sasl:
+    enabled: false
+    mechanism: SCRAM-SHA-512
+    secretRef: redpanda-users
+    users:
+      - mechanism: SCRAM-SHA-512
+        name: admin
+        password: change-me
+clusterDomain: cluster.local
+commonLabels: {}
+config:
+  cluster: {}
+  node: {}
+  rpk: {}
+  tunable:
+    compacted_log_segment_size: 67108864
+    group_topic_partitions: 16
+    kafka_batch_max_bytes: 1048576
+    kafka_connection_rate_limit: 1000
+    log_segment_size: 134217728
+    log_segment_size_max: 268435456
+    log_segment_size_min: 16777216
+    max_compacted_log_segment_size: 536870912
+    topic_partitions_per_shard: 1000
+console:
+  affinity: {}
+  annotations: {}
+  autoscaling:
+    enabled: false
+    maxReplicas: 100
+    minReplicas: 1
+    targetCPUUtilizationPercentage: 80
+  config: {}
+  configmap:
+    create: false
+  console:
+    config: {}
+  deployment:
+    create: false
+  enabled: true
+  extraContainers: []
+  extraEnv: []
+  extraEnvFrom: []
+  extraVolumeMounts: []
+  extraVolumes: []
+  fullnameOverride: ""
+  global: {}
+  image:
+    pullPolicy: IfNotPresent
+    registry: docker.redpanda.com
+    repository: redpandadata/console
+    tag: ""
+  imagePullSecrets: []
+  ingress:
+    annotations: {}
+    className: ""
+    enabled: false
+    hosts:
+      - host: chart-example.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  nameOverride: ""
+  nodeSelector: {}
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    fsGroup: 99
+    runAsUser: 99
+  priorityClassName: ""
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  replicaCount: 1
+  resources: {}
+  secret:
+    create: false
+    enterprise: {}
+    kafka: {}
+    login:
+      github: {}
+      google: {}
+      jwtSecret: ""
+      oidc: {}
+      okta: {}
+    redpanda:
+      adminApi: {}
+  secretMounts: []
+  securityContext:
+    runAsNonRoot: true
+  service:
+    annotations: {}
+    port: 8080
+    type: ClusterIP
+  serviceAccount:
+    annotations: {}
+    create: true
+    name: ""
+  tolerations: []
+  topologySpreadConstraints: {}
+external:
+  enabled: true
+  type: NodePort
+fullnameOverride: ""
+image:
+  pullPolicy: IfNotPresent
+  repository: docker.redpanda.com/redpandadata/redpanda
+  tag: v23.2.24
+imagePullSecrets: []
+license_key: ""
+license_secret_ref: {}
+listeners:
+  admin:
+    external:
+      default:
+        advertisedPorts:
+          - 31644
+        port: 9645
+        tls:
+          cert: external
+    port: 9644
+    tls:
+      cert: default
+      requireClientAuth: false
+  http:
+    authenticationMethod: null
+    enabled: true
+    external:
+      default:
+        advertisedPorts:
+          - 30082
+        authenticationMethod: null
+        port: 8083
+        tls:
+          cert: external
+    kafkaEndpoint: default
+    port: 8082
+    tls:
+      cert: default
+      requireClientAuth: false
+  kafka:
+    authenticationMethod: null
+    external:
+      default:
+        advertisedPorts:
+          - 31092
+        authenticationMethod: null
+        port: 9094
+        tls:
+          cert: external
+    port: 9093
+    tls:
+      cert: default
+      requireClientAuth: false
+  rpc:
+    port: 33145
+    tls:
+      cert: default
+      requireClientAuth: false
+  schemaRegistry:
+    authenticationMethod: null
+    enabled: true
+    external:
+      default:
+        advertisedPorts:
+          - 30081
+        authenticationMethod: null
+        port: 8084
+        tls:
+          cert: external
+    kafkaEndpoint: default
+    port: 8081
+    tls:
+      cert: default
+      requireClientAuth: false
+logging:
+  logLevel: info
+  usageStats:
+    enabled: true
+monitoring:
+  enabled: false
+  labels: {}
+  scrapeInterval: 30s
+nameOverride: ""
+nodeSelector: {}
+post_install_job:
+  enabled: true
+post_upgrade_job:
+  enabled: true
+rackAwareness:
+  enabled: false
+  nodeAnnotation: topology.kubernetes.io/zone
+rbac:
+  annotations: {}
+  enabled: false
+resources:
+  cpu:
+    cores: 1
+  memory:
+    container:
+      max: 2.5Gi
+serviceAccount:
+  annotations: {}
+  create: false
+  name: ""
+statefulset:
+  additionalRedpandaCmdFlags: []
+  annotations: {}
+  budget:
+    maxUnavailable: 1
+  extraVolumeMounts: ""
+  extraVolumes: ""
+  initContainerImage:
+    repository: busybox
+    tag: latest
+  initContainers:
+    configurator:
+      extraVolumeMounts: ""
+      resources: {}
+    extraInitContainers: ""
+    setDataDirOwnership:
+      enabled: false
+      extraVolumeMounts: ""
+      resources: {}
+    setTieredStorageCacheDirOwnership:
+      extraVolumeMounts: ""
+      resources: {}
+    tuning:
+      extraVolumeMounts: ""
+      resources: {}
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  nodeSelector: {}
+  podAffinity: {}
+  podAntiAffinity:
+    custom: {}
+    topologyKey: kubernetes.io/hostname
+    type: hard
+    weight: 100
+  priorityClassName: ""
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 1
+    periodSeconds: 10
+    successThreshold: 1
+  replicas: 5
+  securityContext:
+    fsGroup: 101
+    fsGroupChangePolicy: OnRootMismatch
+    runAsUser: 101
+  sideCars:
+    configWatcher:
+      enabled: true
+      extraVolumeMounts: ""
+      resources: {}
+      securityContext: {}
+  startupProbe:
+    failureThreshold: 120
+    initialDelaySeconds: 1
+    periodSeconds: 10
+  terminationGracePeriodSeconds: 90
+  tolerations: []
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+  updateStrategy:
+    type: RollingUpdate
+storage:
+  hostPath: ""
+  persistentVolume:
+    annotations: {}
+    enabled: true
+    labels: {}
+    size: 20Gi
+    storageClass: ""
+  tieredConfig:
+    cloud_storage_access_key: ""
+    cloud_storage_api_endpoint: ""
+    cloud_storage_azure_container: null
+    cloud_storage_azure_shared_key: null
+    cloud_storage_azure_storage_account: null
+    cloud_storage_bucket: ""
+    cloud_storage_cache_size: 5368709120
+    cloud_storage_credentials_source: config_file
+    cloud_storage_enable_remote_read: true
+    cloud_storage_enable_remote_write: true
+    cloud_storage_enabled: false
+    cloud_storage_region: ""
+    cloud_storage_secret_key: ""
+  tieredStorageHostPath: ""
+  tieredStoragePersistentVolume:
+    annotations: {}
+    enabled: false
+    labels: {}
+    storageClass: ""
+tls:
+  certs:
+    default:
+      caEnabled: true
+    external:
+      caEnabled: true
+  enabled: false
+tolerations: []
+tuning:
+  tune_aio_events: true
