@@ -1,10 +1,12 @@
 target
 updated-values*yaml
 *.swp
+.env
 redpanda.license
 certs
 generate-certs.sh
 hmac.json
 private-ca-key
 superusers.txt
+users.txt
 

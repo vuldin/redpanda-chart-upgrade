@@ -1,0 +1,114 @@
+image:
+  repository: docker.redpanda.com/redpandadata/redpanda
+  tag: v23.2.24
+
+license_secret_ref:
+  secret_name: redpanda-license
+  secret_key: redpanda.license
+
+auth:
+  sasl:
+    enabled: true
+    mechanism: SCRAM-SHA-256
+    secretRef: redpanda-superusers
+    users: []
+
+external:
+  enabled: true
+  type: LoadBalancer
+  domain: testdomain.local
+
+tls:
+  enabled: true
+  certs:
+    default:
+      caEnabled: true
+    external:
+      caEnabled: true
+      secretRef:
+        name: tls-external
+
+listeners:
+  kafka:
+    port: 9093
+    tls:
+      cert: default
+      requireClientAuth: false
+    authenticationMethod: sasl
+    external:
+      default:
+        port: 9094
+        authenticationMethod: sasl
+        tls:
+          cert: external
+  admin:
+    port: 9644
+    tls:
+      cert: default
+      requireClientAuth: false
+    external:
+      default:
+        port: 9645
+        tls:
+          cert: external
+  http:
+    enabled: true
+    port: 8082
+    authenticationMethod: null
+    kafkaEndpoint: default
+    tls:
+      cert: default
+      requireClientAuth: false
+    external:
+      default:
+        port: 8083
+        authenticationMethod: null
+        tls:
+          cert: external
+  schemaRegistry:
+    enabled: true
+    port: 8081
+    authenticationMethod: null
+    kafkaEndpoint: default
+    tls:
+      cert: default
+      requireClientAuth: false
+    external:
+      default:
+        port: 8084
+        authenticationMethod: null
+        tls:
+          cert: external
+
+resources:
+  cpu:
+    cores: 1
+  memory:
+    container:
+      max: 2.5Gi
+
+statefulset:
+  replicas: 3
+  nodeSelector:
+    nodetype: redpanda-pool1
+  tolerations:
+    - key: redpanda-pool1
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+storage:
+  persistentVolume:
+    enabled: true
+    size: 10Gi
+  tieredConfig:
+    cloud_storage_enabled: true
+    cloud_storage_credentials_source: config_file
+    cloud_storage_access_key: REPLACE_WITH_YOUR_HMAC_ACCESS_KEY
+    cloud_storage_secret_key: REPLACE_WITH_YOUR_HMAC_SECRET_KEY
+    cloud_storage_bucket: REPLACE_WITH_YOUR_BUCKET_NAME
+    cloud_storage_region: REPLACE_WITH_YOUR_BUCKET_REGION
+    cloud_storage_api_endpoint: storage.googleapis.com
+
+console:
+  enabled: false
