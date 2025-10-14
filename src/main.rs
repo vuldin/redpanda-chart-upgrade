@@ -642,3 +642,307 @@ fn validate_and_fix_tiered_storage(val: &mut Value) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_yaml::Value;
+
+    #[test]
+    fn test_merge_preserves_existing_values() {
+        let mut val1 = serde_yaml::from_str(
+            r#"
+            image:
+              tag: v23.2.24
+            storage:
+              size: 10Gi
+            "#
+        ).unwrap();
+
+        let val2 = serde_yaml::from_str(
+            r#"
+            image:
+              tag: v25.2.9
+              repository: docker.redpanda.com/redpandadata/redpanda
+            storage:
+              size: 100Gi
+            "#
+        ).unwrap();
+
+        merge(&mut val1, &val2);
+
+        // Original values should be preserved
+        assert_eq!(
+            val1["image"]["tag"].as_str().unwrap(),
+            "v23.2.24"
+        );
+        assert_eq!(
+            val1["storage"]["size"].as_str().unwrap(),
+            "10Gi"
+        );
+        // New keys from val2 should be added
+        assert_eq!(
+            val1["image"]["repository"].as_str().unwrap(),
+            "docker.redpanda.com/redpandadata/redpanda"
+        );
+    }
+
+    #[test]
+    fn test_rename_nested_keys_license_migration() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            license_secret_ref:
+              secret_name: redpanda-license
+              secret_key: redpanda.license
+            "#
+        ).unwrap();
+
+        rename_nested_keys(&mut val);
+
+        assert!(val.get("license_secret_ref").is_none());
+        assert_eq!(
+            val["enterprise"]["licenseSecretRef"]["name"].as_str().unwrap(),
+            "redpanda-license"
+        );
+        assert_eq!(
+            val["enterprise"]["licenseSecretRef"]["key"].as_str().unwrap(),
+            "redpanda.license"
+        );
+    }
+
+    #[test]
+    fn test_rename_nested_keys_tiered_storage_migration() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            storage:
+              tieredConfig:
+                cloud_storage_enabled: true
+                cloud_storage_bucket: test-bucket
+                cloud_storage_region: us-central1
+            "#
+        ).unwrap();
+
+        rename_nested_keys(&mut val);
+
+        assert!(val["storage"].get("tieredConfig").is_none());
+        assert_eq!(
+            val["storage"]["tiered"]["config"]["cloud_storage_enabled"].as_bool().unwrap(),
+            true
+        );
+        assert_eq!(
+            val["storage"]["tiered"]["config"]["cloud_storage_bucket"].as_str().unwrap(),
+            "test-bucket"
+        );
+    }
+
+    #[test]
+    fn test_map_statefulset_to_podtemplate() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            statefulset:
+              replicas: 3
+              nodeSelector:
+                nodetype: redpanda-pool1
+              tolerations:
+                - key: redpanda-pool1
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
+            "#
+        ).unwrap();
+
+        map_statefulset_to_podtemplate(&mut val);
+
+        // Check nodeSelector was migrated
+        assert_eq!(
+            val["podTemplate"]["spec"]["nodeSelector"]["nodetype"].as_str().unwrap(),
+            "redpanda-pool1"
+        );
+        // Check tolerations was migrated
+        assert_eq!(
+            val["podTemplate"]["spec"]["tolerations"][0]["key"].as_str().unwrap(),
+            "redpanda-pool1"
+        );
+        // Check replicas stays in statefulset
+        assert_eq!(
+            val["statefulset"]["replicas"].as_i64().unwrap(),
+            3
+        );
+    }
+
+    #[test]
+    fn test_clean_deprecated_fields() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            statefulset:
+              replicas: 3
+              nodeSelector:
+                nodetype: redpanda-pool1
+              tolerations:
+                - key: redpanda-pool1
+            image:
+              pullPolicy: IfNotPresent
+              tag: v23.2.24
+            post_upgrade_job:
+              enabled: true
+            "#
+        ).unwrap();
+
+        clean_deprecated_fields(&mut val);
+
+        // Deprecated fields should be removed
+        assert!(val["statefulset"].get("nodeSelector").is_none());
+        assert!(val["statefulset"].get("tolerations").is_none());
+        assert!(val["image"].get("pullPolicy").is_none());
+        assert!(val.get("post_upgrade_job").is_none());
+
+        // Non-deprecated fields should remain
+        assert_eq!(val["statefulset"]["replicas"].as_i64().unwrap(), 3);
+        assert_eq!(val["image"]["tag"].as_str().unwrap(), "v23.2.24");
+    }
+
+    #[test]
+    fn test_clean_old_resource_format() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            resources:
+              cpu:
+                cores: 2
+              memory:
+                container:
+                  max: 4Gi
+              requests:
+                cpu: 2
+                memory: 4Gi
+              limits:
+                cpu: 2
+                memory: 4Gi
+            "#
+        ).unwrap();
+
+        clean_old_resource_format(&mut val);
+
+        // Old format should be removed
+        assert!(val["resources"].get("cpu").is_none());
+        assert!(val["resources"].get("memory").is_none());
+
+        // New format should remain
+        assert_eq!(val["resources"]["requests"]["cpu"].as_i64().unwrap(), 2);
+        assert_eq!(val["resources"]["limits"]["memory"].as_str().unwrap(), "4Gi");
+    }
+
+    #[test]
+    fn test_validate_and_fix_tiered_storage_with_complete_config() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            storage:
+              tiered:
+                config:
+                  cloud_storage_enabled: true
+                  cloud_storage_bucket: test-bucket
+                  cloud_storage_region: us-central1
+                  cloud_storage_access_key: GOOG1ETEST
+                  cloud_storage_secret_key: test-secret
+                  cloud_storage_api_endpoint: storage.googleapis.com
+                  cloud_storage_credentials_source: config_file
+            "#
+        ).unwrap();
+
+        validate_and_fix_tiered_storage(&mut val);
+
+        // Configuration should remain intact
+        assert_eq!(
+            val["storage"]["tiered"]["config"]["cloud_storage_api_endpoint"].as_str().unwrap(),
+            "storage.googleapis.com"
+        );
+        assert_eq!(
+            val["storage"]["tiered"]["config"]["cloud_storage_credentials_source"].as_str().unwrap(),
+            "config_file"
+        );
+        assert_eq!(
+            val["storage"]["tiered"]["config"]["cloud_storage_bucket"].as_str().unwrap(),
+            "test-bucket"
+        );
+    }
+
+    #[test]
+    fn test_clean_empty_cloud_storage() {
+        let mut val = serde_yaml::from_str(
+            r#"
+            storage:
+              tiered:
+                config:
+                  cloud_storage_enabled: false
+                  cloud_storage_bucket: ""
+                  cloud_storage_region: ""
+            "#
+        ).unwrap();
+
+        clean_empty_cloud_storage(&mut val);
+
+        // Empty cloud storage config should be removed when disabled
+        if let Some(storage) = val.get("storage") {
+            if let Some(tiered) = storage.get("tiered") {
+                if let Some(config) = tiered.get("config") {
+                    assert!(config.get("cloud_storage_bucket").is_none());
+                    assert!(config.get("cloud_storage_region").is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_unique_filename() {
+        let filename = get_unique_filename("test.yaml");
+        assert!(filename.starts_with("test"));
+        assert!(filename.ends_with(".yaml"));
+    }
+
+    #[test]
+    fn test_resource_format_exists_in_old_format() {
+        let val: Value = serde_yaml::from_str(
+            r#"
+            resources:
+              cpu:
+                cores: 1
+              memory:
+                container:
+                  max: 2.5Gi
+            "#
+        ).unwrap();
+
+        // Check old format exists
+        assert_eq!(val["resources"]["cpu"]["cores"].as_i64().unwrap(), 1);
+        assert_eq!(val["resources"]["memory"]["container"]["max"].as_str().unwrap(), "2.5Gi");
+    }
+
+    #[test]
+    fn test_clean_old_resource_format_with_new_format_present() {
+        let mut val: Value = serde_yaml::from_str(
+            r#"
+            resources:
+              cpu:
+                cores: 2
+              memory:
+                container:
+                  max: 4Gi
+              requests:
+                cpu: 2
+                memory: 4Gi
+              limits:
+                cpu: 2
+                memory: 4Gi
+            "#
+        ).unwrap();
+
+        clean_old_resource_format(&mut val);
+
+        // Old format should be removed
+        assert!(val["resources"].get("cpu").is_none());
+        assert!(val["resources"].get("memory").is_none());
+
+        // New format should remain
+        assert_eq!(val["resources"]["requests"]["cpu"].as_i64().unwrap(), 2);
+        assert_eq!(val["resources"]["limits"]["memory"].as_str().unwrap(), "4Gi");
+    }
+}
+
