@@ -920,33 +920,31 @@ fn rename_nested_keys(val: &mut Value) {
                 }
             }
 
-            // If we found old format resources, convert them
+            // If we found old format resources, add new format (but preserve old format - schema requires both)
             if cpu_value.is_some() || memory_value.is_some() {
                 println!("\n=== Resource Format Conversion ===");
                 if let Some(Value::Mapping(resources_map)) = map.get_mut(&Value::String("resources".to_string())) {
-                    // Remove old format structures
-                    resources_map.remove(&Value::String("cpu".to_string()));
-                    resources_map.remove(&Value::String("memory".to_string()));
-
                     // Create new requests and limits mappings
                     let mut requests_map = serde_yaml::Mapping::new();
                     let mut limits_map = serde_yaml::Mapping::new();
 
                     if let Some(cpu) = &cpu_value {
-                        println!("  ✓ Converting resources.cpu.cores → resources.requests.cpu & resources.limits.cpu (value: {:?})", cpu);
+                        println!("  ✓ Adding resources.requests.cpu & resources.limits.cpu (value: {:?})", cpu);
                         requests_map.insert(Value::String("cpu".to_string()), cpu.clone());
                         limits_map.insert(Value::String("cpu".to_string()), cpu.clone());
                     }
 
                     if let Some(memory) = &memory_value {
-                        println!("  ✓ Converting resources.memory.container.max → resources.requests.memory & resources.limits.memory (value: {:?})", memory);
+                        println!("  ✓ Adding resources.requests.memory & resources.limits.memory (value: {:?})", memory);
                         requests_map.insert(Value::String("memory".to_string()), memory.clone());
                         limits_map.insert(Value::String("memory".to_string()), memory.clone());
                     }
 
+                    println!("  ℹ Note: Preserving old format (resources.cpu.cores, resources.memory.container.max) - required by schema");
                     println!("  ℹ Note: Requests and limits are set to matching values for production readiness");
 
                     // Set requests and limits (matching for production readiness)
+                    // IMPORTANT: DON'T remove old format - schema requires both formats
                     resources_map.insert(Value::String("requests".to_string()), Value::Mapping(requests_map));
                     resources_map.insert(Value::String("limits".to_string()), Value::Mapping(limits_map));
                 }
