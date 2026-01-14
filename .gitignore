@@ -9,4 +9,6 @@ hmac.json
 private-ca-key
 superusers.txt
 users.txt
+.vscode/
+test-*.yaml
 

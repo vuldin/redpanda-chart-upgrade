@@ -8,8 +8,12 @@ The tool transforms legacy Helm values files to be compatible with the latest ch
 - **Tiered Storage Migration**: `storage.tieredConfig.*` → `storage.tiered.config.*`
 - **License Key Migration**: `license_key` → `enterprise.license` and `license_secret_ref` → `enterprise.licenseSecretRef`
 - **Persistent Volume Path Migration**: `storage.tieredStorageHostPath` → `storage.tiered.hostPath`
-- **StatefulSet to PodTemplate Migration**: `statefulset.*` → `podTemplate.spec.*`
-- **Resource Format Conversion**: Old format (`cpu.cores`, `memory.container.max`) → New format (`requests/limits`)
+- **StatefulSet to PodTemplate Migration**: `statefulset.*` → `podTemplate.spec.*` (including `nodeAffinity`, `podAffinity`, `podAntiAffinity`)
+- **External Configuration Migration**: `external.service.domain` → `external.domain`
+- **Resource Format Conversion**: Adds new format (`requests/limits`) while preserving old format (required by schema)
+- **Console v2 to v3 Migration**: Restructures Console configuration for latest chart
+- **Version Pinning**: Ensures `image.tag` and `console.image.tag` are explicitly set
+- **Schema Validation**: Validates output against latest chart schema before writing file
 
 ## Prerequisites
 
@@ -120,10 +124,26 @@ kubectl label secret redpanda-superusers -n redpanda \
 ### 6. Convert values for new chart
 
 ```bash
+# If your values file already has image.tag set (most cases)
 cargo run $VALUES_FILE
+
+# If your values file is missing image.tag, provide it via CLI
+cargo run $VALUES_FILE -- --redpanda-version v23.2.24
+
+# Optionally specify Console version explicitly
+cargo run $VALUES_FILE -- --redpanda-version v23.2.24 --console-version v3.3.2
 ```
 
 This creates `updated-values.yaml` with transformed configuration.
+
+**Version Pinning Behavior:**
+- If `image.tag` exists in input → preserved in output (CLI flags ignored)
+- If `image.tag` is missing → requires `--redpanda-version` flag (errors if not provided)
+- If `console.image.tag` exists in input → preserved in output
+- If `console.image.tag` is missing and console enabled → auto-fetched from chart metadata (or use `--console-version` flag)
+- All versions validated for proper semver format (vX.Y.Z)
+
+The tool also validates the output against the latest Helm chart schema before writing the file, ensuring the configuration is valid.
 
 ### 7. Upgrade Helm chart
 
@@ -688,13 +708,32 @@ The Rust tool performs the following transformations:
 
 ### Field Migrations
 
+**StatefulSet to PodTemplate:**
 - `statefulset.nodeSelector` → `podTemplate.spec.nodeSelector`
 - `statefulset.tolerations` → `podTemplate.spec.tolerations`
 - `statefulset.podAffinity` → `podTemplate.spec.affinity.podAffinity`
+- `statefulset.podAntiAffinity` → `podTemplate.spec.affinity.podAntiAffinity` (with conversion to standard K8s format)
+- `statefulset.nodeAffinity` → `podTemplate.spec.affinity.nodeAffinity`
+- `statefulset.annotations` → `statefulset.podTemplate.annotations` (e.g., `karpenter.sh/do-not-disrupt`)
 - `statefulset.securityContext` → `podTemplate.spec.securityContext`
 - `statefulset.priorityClassName` → `podTemplate.spec.priorityClassName`
-- `statefulset.topologySpreadConstraints` → `podTemplate.spec.topologySpreadConstraints`
+- `statefulset.topologySpreadConstraints` → `podTemplate.spec.topologySpreadConstraints` (adds labelSelector if missing)
 - `statefulset.terminationGracePeriodSeconds` → `podTemplate.spec.terminationGracePeriodSeconds`
+
+**External Configuration:**
+- `external.service.domain` → `external.domain`
+
+**License and Storage:**
+- `license_key` → `enterprise.license`
+- `license_secret_ref` → `enterprise.licenseSecretRef` (with field renaming)
+- `storage.tieredConfig.*` → `storage.tiered.config.*`
+- `storage.tieredStorageHostPath` → `storage.tiered.hostPath`
+- `storage.tieredStoragePersistentVolume` → `storage.tiered.persistentVolume`
+
+**Console v2 to v3:**
+- `console.console.config.kafka.schemaRegistry` → `console.config.schemaRegistry` (moved to top-level)
+- Wraps credentials in `authentication.basic` structure for schemaRegistry and adminApi
+- Removes deprecated Console fields (`enterprise`, `secret.login`, `secret.enterprise`)
 
 ### Deprecated Field Removal
 

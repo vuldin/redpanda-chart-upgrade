@@ -6,17 +6,86 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This repository provides a Rust-based tool and scripts for testing Redpanda Helm chart upgrades in Kubernetes environments. The workflow simulates upgrading from older chart versions (e.g., v5.0.10) to the latest chart version, while maintaining backward compatibility for configuration files.
 
+## Technology Stack
+
+**Language**: Rust (2021 edition)
+
+**Key Dependencies**:
+- `reqwest` (0.11) with JSON features - HTTP client for fetching latest chart values and schema
+- `tokio` (1.0) with full features - Async runtime
+- `serde_yaml` (0.9) - YAML parsing and serialization
+- `serde_json` (1.0) - JSON handling for schema validation
+- `clap` (4.4) with derive features - CLI argument parsing
+- `regex` (1.10) - Version format validation
+- `jsonschema` (0.18) - JSON Schema validation
+
+**External Tools Required**: `kind`, `helm`, `kubectl`, `yq`, `jq`, `gcloud`
+
 ## Core Architecture
 
-### Configuration Transformation Tool (`src/main.rs`)
+### Configuration Transformation Tool
 
-The Rust application transforms legacy Helm values files to be compatible with the latest chart schema. Key transformation logic:
+The Rust application transforms legacy Helm values files to be compatible with the latest chart schema. The codebase is organized into modular components:
 
-1. **Tiered Storage Migration** (`storage.tieredConfig.*` → `storage.tiered.config.*`)
-2. **License Key Migration** (`license_key` → `enterprise.license` and `license_secret_ref` → `enterprise.licenseSecretRef`)
-3. **Persistent Volume Path Migration** (`storage.tieredStorageHostPath` → `storage.tiered.hostPath`)
+- `src/main.rs` - CLI interface and orchestration
+- `src/transformation_engine.rs` - Core transformation logic
+- `src/transformation_rule.rs` - Rule definitions and application
+- `src/schema_registry.rs` - Schema version management
+- `src/schema_version.rs` - Version detection
+- `src/validation.rs` - Configuration validation
+- `src/reporter.rs` - Transformation reporting
 
-The tool fetches the latest chart schema from GitHub, merges it with existing configurations (preserving user values), and outputs a transformed `updated-values.yaml` file with incremental numbering if needed.
+**Key transformation logic**:
+
+1. **License Migrations**:
+   - `license_key` → `enterprise.license`
+   - `license_secret_ref` → `enterprise.licenseSecretRef` (with field renaming)
+
+2. **Tiered Storage Migrations**:
+   - `storage.tieredConfig.*` → `storage.tiered.config.*`
+   - `storage.tieredStorageHostPath` → `storage.tiered.hostPath`
+   - `storage.tieredStoragePersistentVolume` → `storage.tiered.persistentVolume`
+
+3. **StatefulSet to PodTemplate Migration**:
+   - Moves `nodeSelector`, `tolerations`, `affinity`, `securityContext`, `priorityClassName`, `topologySpreadConstraints`, `terminationGracePeriodSeconds` from `statefulset` to `podTemplate.spec`
+   - Converts `podAntiAffinity` from v5 format (simple topologyKey) to standard Kubernetes format with labelSelector
+   - Migrates `nodeAffinity` to `podTemplate.spec.affinity.nodeAffinity`
+   - Migrates `statefulset.annotations` to `statefulset.podTemplate.annotations` (e.g., `karpenter.sh/do-not-disrupt`)
+   - Automatically adds required labelSelector to topologySpreadConstraints if missing
+
+4. **External Configuration Migration**:
+   - `external.service.domain` → `external.domain` (moved up one level)
+   - Enables proper domain configuration for external access
+
+5. **Resource Format Conversion**:
+   - Adds new format: `resources.requests` and `resources.limits` (matching values for production)
+   - Preserves old format: `resources.cpu.cores` and `resources.memory.container.max` (required by schema)
+   - Both formats maintained for backward compatibility
+
+6. **Console v2 to v3 Migration**:
+   - Moves `kafka.schemaRegistry` to top-level `schemaRegistry`
+   - Wraps credentials in `authentication.basic` structure for both schemaRegistry and adminApi
+   - Preserves SASL configuration with credentials
+   - Removes deprecated Console fields (`enterprise`, `secret.login`, `secret.enterprise`)
+   - Filters null values from `ingress.className` and `service.targetPort`
+
+7. **Listeners Cleanup**:
+   - Removes deprecated `kafkaEndpoint` field from HTTP and SchemaRegistry listeners
+
+8. **InitContainers Filtering**:
+   - Removes deprecated fields: `tuning`, `extraInitContainers`, `setTieredStorageCacheDirOwnership`
+   - Removes `extraVolumeMounts` and `resources` from individual init containers
+
+9. **SideCars Cleanup**:
+   - Removes `extraVolumeMounts`, `resources`, and `securityContext` from configWatcher
+
+10. **Schema Validation**:
+   - Fetches latest `values.schema.json` from GitHub
+   - Validates output against schema before writing file
+   - Fails early with clear error messages if output doesn't conform to schema
+   - Prevents invalid configurations from being deployed
+
+The tool fetches the latest chart schema from GitHub, merges it with existing configurations (preserving user values), validates the output against the schema, and outputs a transformed `updated-values.yaml` file with incremental numbering if needed.
 
 ### Environment Configuration
 
@@ -46,11 +115,28 @@ The repository assumes a **kind** Kubernetes cluster with:
 # Build the Rust application
 cargo build --release
 
-# Transform an existing values file
+# Transform an existing values file (preserves existing versions)
 cargo run <path-to-existing-values.yaml>
 # Example: cargo run values.yaml
 # Output: updated-values.yaml (or updated-values-N.yaml if file exists)
+
+# Transform with explicit Redpanda version (when input is missing image.tag)
+cargo run <path-to-existing-values.yaml> --redpanda-version <VERSION>
+# Example: cargo run values-minimal.yaml --redpanda-version v23.2.24
+
+# Transform with both Redpanda and Console versions
+cargo run <path-to-existing-values.yaml> --redpanda-version <VERSION> --console-version <VERSION>
+# Example: cargo run values.yaml --redpanda-version v23.2.24 --console-version v3.3.2
 ```
+
+**Version Pinning Behavior**:
+- If input has `image.tag` → preserved in output (CLI flags ignored)
+- If input missing `image.tag` → REQUIRES `--redpanda-version` flag (errors if not provided)
+- If input has `console.image.tag` → preserved in output
+- If input missing `console.image.tag` and console enabled:
+  - If `--console-version` provided → uses it
+  - If no flag → auto-fetches latest from chart metadata
+- All versions validated for proper semver format (vX.Y.Z)
 
 ### Test the Full Upgrade Path
 
@@ -116,6 +202,45 @@ gcloud storage ls --recursive "gs://$BUCKET_NAME/**"
 4. **kind Cluster**: Create with 1 control plane + 5 worker nodes (see README for config)
 
 ## Important Implementation Details
+
+### Schema Validation
+
+The Redpanda Helm chart includes comprehensive JSON schema validation (`values.schema.json`) that validates configurations at multiple points:
+
+**1. Transformation Tool Validation (NEW)**:
+- The tool **automatically validates output** against the latest schema before writing the file
+- Fetches `values.schema.json` from GitHub at runtime
+- Fails immediately with clear error messages if output doesn't conform
+- Prevents generating invalid configurations that would fail at deployment time
+
+**2. Helm Validation**:
+- Helm validates during `helm install` or `helm upgrade`
+- Uses `additionalProperties: false` to reject unknown/deprecated fields
+- Fails immediately if values don't match the schema (exit code 1)
+- No silent ignoring: Invalid or deprecated fields cause complete failure
+
+**Benefits of dual validation**:
+- **Catch errors early**: Tool validation happens before committing transformed files
+- **Clear context**: Tool errors reference transformation rules that may need updates
+- **Safety net**: Helm provides final validation at deployment time
+
+**Manual validation (if needed)**:
+```bash
+# Fast validation test
+helm template redpanda redpanda/redpanda -f values.yaml
+
+# Dry-run with cluster context
+helm upgrade --install redpanda redpanda/redpanda -n redpanda -f values.yaml --dry-run
+```
+
+**Schema validation output example**:
+```
+=== Schema Validation ===
+  ℹ Fetching latest chart schema...
+  ✓ Schema validation passed
+```
+
+If validation fails, the tool will exit with clear error messages listing all schema violations before writing any output file.
 
 ### TLS Configuration
 The setup creates two certificate sets:
