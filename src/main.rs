@@ -8,9 +8,10 @@ use reqwest;
 use clap::Parser;
 use regex::Regex;
 
-const LATEST_CHART_VALUES_URL: &str = "https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/heads/main/charts/redpanda/chart/values.yaml";
-const CONSOLE_CHART_YAML_URL: &str = "https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/heads/main/charts/console/chart/Chart.yaml";
-const VALUES_SCHEMA_URL: &str = "https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/heads/main/charts/redpanda/chart/values.schema.json";
+const CHART_TAG: &str = "charts/redpanda/v25.3.1";
+const LATEST_CHART_VALUES_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/redpanda/chart/values.yaml");
+const CONSOLE_CHART_YAML_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/console/chart/Chart.yaml");
+const VALUES_SCHEMA_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/redpanda/chart/values.schema.json");
 
 #[derive(Parser, Debug)]
 #[command(name = "redpanda-chart-upgrade")]
@@ -1025,6 +1026,24 @@ fn filter_console_null_values(val: &mut Value) {
     if let Value::Mapping(root_map) = val {
         if let Some(Value::Mapping(console_map)) = root_map.get_mut(&Value::String("console".to_string())) {
             println!("\n=== Filtering Console Null Values ===");
+
+            // When console is disabled, strip all sub-properties except "enabled"
+            // The merge step pulls in all upstream defaults (monitoring, ingress, etc.)
+            // which may not be valid in the target chart's console subchart schema
+            let enabled_key = Value::String("enabled".to_string());
+            if let Some(Value::Bool(false)) = console_map.get(&enabled_key) {
+                let keys_to_remove: Vec<Value> = console_map.keys()
+                    .filter(|k| *k != &enabled_key)
+                    .cloned()
+                    .collect();
+                for key in &keys_to_remove {
+                    if let Value::String(key_str) = key {
+                        println!("  ✓ Removed: console.{} (console is disabled)", key_str);
+                    }
+                    console_map.remove(key);
+                }
+                return;
+            }
 
             // Filter ingress - remove null className
             if let Some(Value::Mapping(ingress_map)) = console_map.get_mut(&Value::String("ingress".to_string())) {
