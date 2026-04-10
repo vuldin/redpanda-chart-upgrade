@@ -77,6 +77,15 @@ async fn main() {
 
     // THIRD: Clean up again AFTER merge to remove any empty values added back by merge
     clean_empty_cloud_storage(&mut data1);
+
+    // FOURTH: Remove console.console if it was re-added by merge
+    if let Value::Mapping(root_map) = &mut data1 {
+        if let Some(Value::Mapping(console_map)) = root_map.get_mut(&Value::String("console".to_string())) {
+            if console_map.remove(&Value::String("console".to_string())).is_some() {
+                println!("  ✓ Removed: console.console (re-added by merge, not valid in v3)");
+            }
+        }
+    }
     // Note: NOT removing old resource format - schema requires BOTH old and new formats
     // clean_old_resource_format(&mut data1);
 
@@ -510,6 +519,27 @@ fn migrate_console_v2_to_v3(val: &mut Value) {
             // Check if console.console.config exists (v2 structure)
             if let Some(Value::Mapping(inner_console)) = console_map.get(&Value::String("console".to_string())) {
                 if let Some(v2_config) = inner_console.get(&Value::String("config".to_string())) {
+                    // Check for unmigrateable Console v2 config before proceeding
+                    if let Value::Mapping(v2_map) = v2_config {
+                        if let Some(Value::Mapping(kafka_v2)) = v2_map.get(&Value::String("kafka".to_string())) {
+                            if kafka_v2.contains_key(&Value::String("protobuf".to_string())) {
+                                eprintln!("\n❌ Console Migration Error: Unmigrateable configuration detected");
+                                eprintln!();
+                                eprintln!("  Your values contain 'console.console.config.kafka.protobuf' which is not");
+                                eprintln!("  supported in Console v3. This config cannot be automatically migrated.");
+                                eprintln!();
+                                eprintln!("  Action required:");
+                                eprintln!("    1. Remove the 'kafka.protobuf' section from your Console config");
+                                eprintln!("    2. Re-run this tool after removing it");
+                                eprintln!("    3. Configure protobuf deserialization through Schema Registry instead");
+                                eprintln!();
+                                eprintln!("  See: https://docs.redpanda.com/current/console/config/protobuf/");
+                                eprintln!();
+                                process::exit(1);
+                            }
+                        }
+                    }
+
                     println!("\n=== Console v2 → v3 Migration ===");
 
                     let mut v3_config = serde_yaml::Mapping::new();
@@ -694,6 +724,9 @@ fn clean_deprecated_fields(val: &mut Value) {
         }
         if map.remove(&Value::String("post_install_job".to_string())).is_some() {
             println!("  ✓ Removed: root-level post_install_job (deprecated)");
+        }
+        if map.remove(&Value::String("internal".to_string())).is_some() {
+            println!("  ✓ Removed: root-level internal (deprecated, replaced by clusterDomain)");
         }
         if map.remove(&Value::String("connectors".to_string())).is_some() {
             println!("  ✓ Removed: connectors (deprecated)");
