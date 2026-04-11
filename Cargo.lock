@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "redpanda-chart-upgrade"
-version = "25.3.1"
+version = "25.3.4"
 dependencies = [
  "clap",
  "jsonschema",

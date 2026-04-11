@@ -8,10 +8,10 @@ use reqwest;
 use clap::Parser;
 use regex::Regex;
 
-const CHART_TAG: &str = "charts/redpanda/v25.3.1";
-const LATEST_CHART_VALUES_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/redpanda/chart/values.yaml");
-const CONSOLE_CHART_YAML_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/console/chart/Chart.yaml");
-const VALUES_SCHEMA_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.1", "/charts/redpanda/chart/values.schema.json");
+const CHART_TAG: &str = "charts/redpanda/v25.3.4";
+const LATEST_CHART_VALUES_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.4", "/charts/redpanda/chart/values.yaml");
+const CONSOLE_CHART_YAML_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.4", "/charts/console/chart/Chart.yaml");
+const VALUES_SCHEMA_URL: &str = concat!("https://raw.githubusercontent.com/redpanda-data/redpanda-operator/refs/tags/", "charts/redpanda/v25.3.4", "/charts/redpanda/chart/values.schema.json");
 
 #[derive(Parser, Debug)]
 #[command(name = "redpanda-chart-upgrade")]
@@ -78,8 +78,13 @@ async fn main() {
     // THIRD: Clean up again AFTER merge to remove any empty values added back by merge
     clean_empty_cloud_storage(&mut data1);
 
-    // FOURTH: Remove console.console if it was re-added by merge
+    // FOURTH: Remove fields re-added by merge that shouldn't be in the output
     if let Value::Mapping(root_map) = &mut data1 {
+        // Remove root-level podTemplate (chart defaults add it, but values should use statefulset.podTemplate)
+        if root_map.remove(&Value::String("podTemplate".to_string())).is_some() {
+            println!("  ✓ Removed: root-level podTemplate (use statefulset.podTemplate instead)");
+        }
+        // Remove console.console (v2 structure re-added by merge)
         if let Some(Value::Mapping(console_map)) = root_map.get_mut(&Value::String("console".to_string())) {
             if console_map.remove(&Value::String("console".to_string())).is_some() {
                 println!("  ✓ Removed: console.console (re-added by merge, not valid in v3)");
@@ -262,19 +267,19 @@ fn map_statefulset_to_podtemplate(val: &mut Value) {
         // Check for root-level fields
         if let Some(ns) = map.get(&Value::String("nodeSelector".to_string())) {
             if !matches!(ns, Value::Mapping(m) if m.is_empty()) {
-                println!("  ✓ Migrating root-level nodeSelector → podTemplate.spec.nodeSelector");
+                println!("  ✓ Migrating root-level nodeSelector → statefulset.podTemplate.spec.nodeSelector");
                 root_node_selector = Some(ns.clone());
             }
         }
         if let Some(tol) = map.get(&Value::String("tolerations".to_string())) {
             if !matches!(tol, Value::Sequence(s) if s.is_empty()) {
-                println!("  ✓ Migrating root-level tolerations → podTemplate.spec.tolerations");
+                println!("  ✓ Migrating root-level tolerations → statefulset.podTemplate.spec.tolerations");
                 root_tolerations = Some(tol.clone());
             }
         }
         if let Some(aff) = map.get(&Value::String("affinity".to_string())) {
             if !matches!(aff, Value::Mapping(m) if m.is_empty()) {
-                println!("  ✓ Migrating root-level affinity → podTemplate.spec.affinity");
+                println!("  ✓ Migrating root-level affinity → statefulset.podTemplate.spec.affinity");
                 root_affinity = Some(aff.clone());
             }
         }
@@ -295,13 +300,13 @@ fn map_statefulset_to_podtemplate(val: &mut Value) {
             // Extract all the values we need to migrate
             if let Some(ns) = statefulset_map.get(&Value::String("nodeSelector".to_string())) {
                 if !matches!(ns, Value::Mapping(m) if m.is_empty()) {
-                    println!("  ✓ Migrating statefulset.nodeSelector → podTemplate.spec.nodeSelector");
+                    println!("  ✓ Migrating statefulset.nodeSelector → statefulset.podTemplate.spec.nodeSelector");
                     node_selector = Some(ns.clone());
                 }
             }
             if let Some(tol) = statefulset_map.get(&Value::String("tolerations".to_string())) {
                 if !matches!(tol, Value::Sequence(s) if s.is_empty()) {
-                    println!("  ✓ Migrating statefulset.tolerations → podTemplate.spec.tolerations");
+                    println!("  ✓ Migrating statefulset.tolerations → statefulset.podTemplate.spec.tolerations");
                     tolerations = Some(tol.clone());
                 }
             }
@@ -374,7 +379,13 @@ fn map_statefulset_to_podtemplate(val: &mut Value) {
            node_affinity.is_some() || security_context.is_some() || priority_class_name.is_some() ||
            topology_spread_constraints.is_some() || termination_grace_period.is_some() {
 
-            let pod_template_entry = map
+            let statefulset_entry = map
+                .entry(Value::String("statefulset".to_string()))
+                .or_insert_with(|| Value::Mapping(serde_yaml::Mapping::new()));
+
+            let statefulset_map_ref = if let Value::Mapping(m) = statefulset_entry { m } else { return; };
+
+            let pod_template_entry = statefulset_map_ref
                 .entry(Value::String("podTemplate".to_string()))
                 .or_insert_with(|| Value::Mapping(serde_yaml::Mapping::new()));
 
@@ -727,6 +738,9 @@ fn clean_deprecated_fields(val: &mut Value) {
         }
         if map.remove(&Value::String("internal".to_string())).is_some() {
             println!("  ✓ Removed: root-level internal (deprecated, replaced by clusterDomain)");
+        }
+        if map.remove(&Value::String("podTemplate".to_string())).is_some() {
+            println!("  ✓ Removed: root-level podTemplate (deprecated, use statefulset.podTemplate)");
         }
         if map.remove(&Value::String("connectors".to_string())).is_some() {
             println!("  ✓ Removed: connectors (deprecated)");
