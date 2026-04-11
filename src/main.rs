@@ -527,27 +527,67 @@ fn migrate_external_config(val: &mut Value) {
 fn migrate_console_v2_to_v3(val: &mut Value) {
     if let Value::Mapping(root_map) = val {
         if let Some(Value::Mapping(console_map)) = root_map.get_mut(&Value::String("console".to_string())) {
-            // Check if console.console.config exists (v2 structure)
-            if let Some(Value::Mapping(inner_console)) = console_map.get(&Value::String("console".to_string())) {
+            // Check if console.console.config exists (v2 structure) — clone to avoid borrow issues
+            let inner_console_clone = console_map.get(&Value::String("console".to_string())).cloned();
+            if let Some(Value::Mapping(inner_console)) = inner_console_clone {
                 if let Some(v2_config) = inner_console.get(&Value::String("config".to_string())) {
-                    // Check for unmigrateable Console v2 config before proceeding
+                    let mut serde_config_to_insert: Option<Value> = None;
+                    let mut extra_env_to_add: Option<Value> = None;
+
+                    // Migrate kafka.protobuf → serde.protobuf (Console v2 → v3)
+                    // Extract everything we need first (immutable borrow), then mutate later
                     if let Value::Mapping(v2_map) = v2_config {
                         if let Some(Value::Mapping(kafka_v2)) = v2_map.get(&Value::String("kafka".to_string())) {
-                            if kafka_v2.contains_key(&Value::String("protobuf".to_string())) {
-                                eprintln!("\n❌ Console Migration Error: Unmigrateable configuration detected");
-                                eprintln!();
-                                eprintln!("  Your values contain 'console.console.config.kafka.protobuf' which is not");
-                                eprintln!("  supported in Console v3. This config cannot be automatically migrated.");
-                                eprintln!();
-                                eprintln!("  Action required:");
-                                eprintln!("    1. Remove the 'kafka.protobuf' section from your Console config");
-                                eprintln!("    2. Re-run this tool after removing it");
-                                eprintln!("    3. Configure protobuf deserialization through Schema Registry instead");
-                                eprintln!();
-                                eprintln!("  See: https://docs.redpanda.com/current/console/config/protobuf/");
-                                eprintln!();
-                                process::exit(1);
+                            if let Some(protobuf_v2) = kafka_v2.get(&Value::String("protobuf".to_string())) {
+                                println!("  ✓ Migrating console kafka.protobuf → serde.protobuf");
+
+                                let mut serde_map = serde_yaml::Mapping::new();
+                                let mut protobuf_v3 = if let Value::Mapping(p) = protobuf_v2 {
+                                    p.clone()
+                                } else {
+                                    serde_yaml::Mapping::new()
+                                };
+
+                                // Extract basicAuth.username from protobuf.git config → console.extraEnv
+                                if let Some(Value::Mapping(git_config)) = protobuf_v3.get(&Value::String("git".to_string())) {
+                                    if let Some(Value::Mapping(basic_auth)) = git_config.get(&Value::String("basicAuth".to_string())) {
+                                        if let Some(username) = basic_auth.get(&Value::String("username".to_string())) {
+                                            println!("  ✓ Migrating protobuf git basicAuth.username → console.extraEnv");
+
+                                            extra_env_to_add = Some(Value::Mapping({
+                                                let mut m = serde_yaml::Mapping::new();
+                                                m.insert(Value::String("name".to_string()), Value::String("SERDE_PROTOBUF_GIT_BASICAUTH_USERNAME".to_string()));
+                                                m.insert(Value::String("value".to_string()), username.clone());
+                                                m
+                                            }));
+                                        }
+
+                                        // Remove username from basicAuth in git config (now in extraEnv)
+                                        let mut git_v3 = git_config.clone();
+                                        if let Some(Value::Mapping(ba)) = git_v3.get_mut(&Value::String("basicAuth".to_string())) {
+                                            ba.remove(&Value::String("username".to_string()));
+                                        }
+                                        protobuf_v3.insert(Value::String("git".to_string()), Value::Mapping(git_v3));
+                                    }
+                                }
+
+                                serde_map.insert(Value::String("protobuf".to_string()), Value::Mapping(protobuf_v3));
+                                serde_config_to_insert = Some(Value::Mapping(serde_map));
+
+                                println!("  ✓ Protobuf config migrated to serde.protobuf");
+                                println!("  ℹ Note: Ensure SERDE_PROTOBUF_GIT_BASICAUTH_PASSWORD is available via console.extraEnvFrom secret");
+                                println!("  ℹ See: https://docs.redpanda.com/current/console/config/deserialization/");
                             }
+                        }
+                    }
+
+                    // Now mutate console_map with extracted extraEnv (after immutable borrow is done)
+                    if let Some(env_entry) = extra_env_to_add {
+                        let extra_env = console_map
+                            .entry(Value::String("extraEnv".to_string()))
+                            .or_insert_with(|| Value::Sequence(vec![]));
+                        if let Value::Sequence(env_list) = extra_env {
+                            env_list.push(env_entry);
                         }
                     }
 
@@ -698,12 +738,15 @@ fn migrate_console_v2_to_v3(val: &mut Value) {
                         }
                     }
 
-                    // Replace console.console.config with console.config
-                    if !v3_config.is_empty() {
-                        console_map.insert(Value::String("config".to_string()), Value::Mapping(v3_config));
-                        console_map.remove(&Value::String("console".to_string()));
-                        println!("  ✓ Console v2 → v3 migration complete");
+                    // Insert serde (protobuf) config if it was extracted
+                    if let Some(serde_val) = serde_config_to_insert {
+                        v3_config.insert(Value::String("serde".to_string()), serde_val);
                     }
+
+                    // Replace console.console.config with console.config
+                    console_map.insert(Value::String("config".to_string()), Value::Mapping(v3_config));
+                    console_map.remove(&Value::String("console".to_string()));
+                    println!("  ✓ Console v2 → v3 migration complete");
                 }
             }
         }
